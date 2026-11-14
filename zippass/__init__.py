@@ -1,17 +1,22 @@
-"""zippass - local zip password recovery web app."""
-import os
+"""zippass - local zip password recovery web app.
 
-from flask import Flask
+the package core (candidates, cryptoparse, testers, ghshard) is usable
+without flask - the cloud runner imports it headless. the web factory
+imports flask lazily so a pip-less runner (or any cli use) never needs it.
+"""
+import os
 
 from . import config
 
 
-def create_app() -> Flask:
+def create_app():
     """app factory: wire blueprint + error boundary, ensure storage dirs.
 
     reads config dynamically (module attributes), so tests and deployment
     overrides see patched values.
     """
+    from flask import Flask
+
     os.makedirs(config.UPLOAD_DIR, exist_ok=True)
     os.makedirs(config.WORDLIST_DIR, exist_ok=True)
     app = Flask(__name__)
