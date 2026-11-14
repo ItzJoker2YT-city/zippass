@@ -1,0 +1,13 @@
+[package]
+name = "aesfast_rs"
+version = "1.0.0"
+edition = "2021"
+
+[lib]
+name = "aesfast_rs"
+crate-type = ["cdylib"]
+
+[profile.release]
+opt-level = 3
+lto = "fat"
+codegen-units = 1

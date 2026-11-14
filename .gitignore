@@ -1,0 +1,15 @@
+# user data never leaves this box
+uploads/
+wordlists/
+logs/
+server.pid
+*.pid
+.env
+
+# build artifacts (ci builds the .so; windows users build their own dll)
+__pycache__/
+*.pyc
+.pytest_cache/
+zippass/_native/
+rust/target/
+numba_cache/

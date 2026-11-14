@@ -1,0 +1,20 @@
+﻿[dict xato-top1m]   65.9s state=exhausted tried=999999 found=None
+[dict pwdb-top1m]   70.3s state=exhausted tried=1000000 found=None
+[brute mixed+digits 1-4]  612.4s state=exhausted tried=15018570 found=None
+[brute lower+digits 1-5]  705.0s state=found tried=17576625 found=jokwe
+PASSWORD FOUND: jokwe
+python : Traceback (most recent call last):
+At line:1 char:1
++ python -u broad_ladder.py 2>&1 | Out-File -FilePath broad_ladder.log  ...
++ ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : NotSpecified: (Traceback (most recent call last)::String) [], RemoteException
+    + FullyQualifiedErrorId : NativeCommandError
+ 
+  File "D:\jokers suff\code\zip\broad_ladder.py", line 86, in <module>
+    main()
+  File "D:\jokers suff\code\zip\broad_ladder.py", line 64, in main
+    report(s)
+  File "D:\jokers suff\code\zip\crack_theirs.py", line 116, in report
+    v = call(f"/archives/{s['zip_id']}/verify",
+                          ~^^^^^^^^^^
+KeyError: 'zip_id'

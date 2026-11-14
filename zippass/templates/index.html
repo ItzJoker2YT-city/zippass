@@ -1,0 +1,539 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>zippass</title>
+<style>
+  :root { --bg:#0d1117; --card:#161b22; --line:#21262d; --fg:#c9d1d9; --dim:#8b949e; --ok:#3fb950; --warn:#d29922; --bad:#f85149; }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--bg); color:var(--fg); font:14px/1.5 "Cascadia Mono", Consolas, monospace; }
+  header { padding:18px 24px; border-bottom:1px solid var(--line); display:flex; align-items:baseline; gap:12px; }
+  header h1 { margin:0; font-size:18px; color:var(--ok); letter-spacing:1px; }
+  header .sub { color:var(--dim); font-size:12px; }
+  main { max-width:900px; margin:0 auto; padding:20px 16px 60px; display:flex; flex-direction:column; gap:14px; }
+  .card { background:var(--card); border:1px solid var(--line); border-radius:8px; padding:16px; }
+  .card h2 { margin:0 0 12px; font-size:13px; color:var(--dim); text-transform:uppercase; letter-spacing:1px; }
+  .hidden { display:none !important; }
+  #drop { border:1px dashed #30363d; border-radius:6px; padding:28px; text-align:center; color:var(--dim); cursor:pointer; }
+  #drop.drag { border-color:var(--ok); color:var(--ok); }
+  .btn { display:inline-block; padding:7px 14px; background:#21262d; color:var(--fg); border:1px solid #30363d; border-radius:6px; cursor:pointer; font:inherit; }
+  .btn:hover { border-color:var(--dim); }
+  .btn.primary { background:#238636; border-color:#2ea043; color:#fff; }
+  .btn.stop { background:#b62324; border-color:#f85149; color:#fff; }
+  .btn:disabled { opacity:.45; cursor:default; }
+  input[type=text], input[type=number], textarea {
+    width:100%; padding:7px 10px; background:#0d1117; border:1px solid #30363d; border-radius:6px; color:var(--fg); font:inherit; }
+  textarea { min-height:110px; resize:vertical; }
+  label.ck { margin-right:14px; cursor:pointer; color:var(--dim); }
+  label.ck input { accent-color:var(--ok); }
+  .row { display:flex; gap:10px; align-items:center; flex-wrap:wrap; margin-top:10px; }
+  .row input[type=text] { flex:1; }
+  .grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(130px,1fr)); gap:8px; }
+  .stat { background:#0d1117; border:1px solid var(--line); border-radius:6px; padding:8px 10px; }
+  .stat b { display:block; font-size:15px; color:var(--fg); }
+  .stat span { font-size:11px; color:var(--dim); }
+  .bar { height:10px; background:#0d1117; border:1px solid var(--line); border-radius:5px; overflow:hidden; }
+  .bar i { display:block; height:100%; width:0%; background:var(--ok); transition:width .4s; }
+  .bar.ind i { width:30% !important; animation:slide 1.2s infinite linear; }
+  @keyframes slide { from{margin-left:-30%} to{margin-left:100%} }
+  table { width:100%; border-collapse:collapse; }
+  td { padding:5px 8px; border-bottom:1px solid var(--line); font-size:13px; }
+  .badge { display:inline-block; padding:1px 8px; border-radius:10px; font-size:11px; border:1px solid; }
+  .b-aes { color:var(--warn); border-color:var(--warn); }
+  .b-zc  { color:#58a6ff; border-color:#58a6ff; }
+  .b-none{ color:var(--dim); border-color:#30363d; }
+  .member td { cursor:pointer; }
+  .member.sel td { background:#12261a; cursor:pointer; }
+  #found { border:1px solid var(--ok); background:#12261a; padding:14px; border-radius:6px; font-size:18px; color:var(--ok); }
+  #log { background:#0d1117; border:1px solid var(--line); border-radius:6px; padding:8px 10px; max-height:150px; overflow:auto; font-size:12px; color:var(--dim); white-space:pre-wrap; }
+  .tabs { display:flex; gap:6px; margin-bottom:12px; flex-wrap:wrap; }
+  .tab { padding:6px 12px; background:none; border:1px solid var(--line); border-radius:6px; color:var(--dim); cursor:pointer; font:inherit; }
+  .tab.active { color:var(--ok); border-color:var(--ok); }
+  .panel .field { margin-top:8px; }
+  .panel .field span { display:block; font-size:11px; color:var(--dim); margin-bottom:3px; }
+  pre { background:#0d1117; border:1px solid var(--line); padding:10px; border-radius:6px; overflow:auto; font-size:12px; }
+  .note { color:var(--dim); font-size:12px; margin-top:8px; }
+  .vok { color:var(--ok); } .vbad { color:var(--bad); }
+  .wl-item { padding:4px 8px; border:1px solid var(--line); border-radius:5px; cursor:pointer; display:inline-block; margin:3px 4px 0 0; font-size:12px; }
+  .wl-item:hover { border-color:var(--ok); color:var(--ok); }
+  .est { margin-top:8px; font-size:12px; color:var(--dim); }
+  .est.good { color:var(--ok); } .est.warn { color:var(--warn); } .est.bad { color:var(--bad); }
+  .steps div { padding:2px 0; } .steps b { color:var(--ok); margin-right:6px; }
+  .qsrow { display:flex; gap:8px; flex-wrap:wrap; margin-bottom:10px; }
+  .qs { font-size:12px; padding:6px 10px; }
+</style>
+</head>
+<body>
+<header><h1>zippass</h1><span class="sub">local zip password recovery - all state stays on this machine</span></header>
+<main>
+
+<section class="card">
+  <div id="drop">drop a .zip here or <label class="btn">browse<input type="file" id="file" accept=".zip" hidden></label></div>
+  <div id="fileinfo" class="note hidden"></div>
+</section>
+
+<section class="card" id="helpcard">
+  <h2>how to use - 3 steps</h2>
+  <div class="steps">
+    <div><b>1.</b> drop your .zip in the box above</div>
+    <div><b>2.</b> click a quick-start button below - the big password lists are already built in</div>
+    <div><b>3.</b> wait - the password shows up in green on this page when found</div>
+  </div>
+  <div class="note">"exhausted" = that attack tried its whole space and the password is not that type - move to the next button. every guess stays on this computer, nothing is sent anywhere.</div>
+</section>
+
+<section class="card hidden" id="memberscard">
+  <h2>archive</h2>
+  <table id="members"></table>
+  <div class="note">attack target defaults to the smallest encrypted member (fastest confirm). click a member to pin it.</div>
+</section>
+
+<section class="card hidden" id="attackcard">
+  <h2>attack - quick start</h2>
+  <div class="qsrow" id="qsrow">
+    <button class="btn primary qs" data-qs="common">1M common passwords (~1 sec)</button>
+    <button class="btn qs" data-qs="pin">digits 1-6 (~1 sec)</button>
+    <button class="btn qs" data-qs="rockyou">rockyou 14M (~10 sec)</button>
+    <button class="btn qs" data-qs="hyb">words + 2 digits (~5-10 min)</button>
+  </div>
+  <div class="note" id="modehelp"></div>
+  <div class="tabs">
+    <button class="tab active" data-mode="dict">dictionary</button>
+    <button class="tab" data-mode="mask">mask</button>
+    <button class="tab" data-mode="brute">brute force</button>
+    <button class="tab" data-mode="hybrid">hybrid</button>
+    <button class="tab" data-mode="verify">verify</button>
+  </div>
+
+  <div class="panel" id="p-dict">
+    <div class="field"><span>wordlist path (a file on this PC) - or pick one below</span><input type="text" id="wlpath" placeholder="wordlists\rockyou.txt"></div>
+    <div class="field"><span>wordlists in ./wordlists - click to use, or upload one</span>
+      <div id="wllist"></div>
+      <div class="row"><label class="btn">upload wordlist<input type="file" id="wlfile" hidden></label></div>
+    </div>
+  </div>
+
+  <div class="panel hidden" id="p-mask">
+    <div class="field"><span>mask pattern - each ?x is one character slot (?l lower ?u upper ?d digit ?s symbol ?h hex ?a all ?1..?4 your sets below)</span><input type="text" id="mask" placeholder="?u?l?l?l?d?d?d?d"></div>
+    <div class="field"><span>examples - click to fill</span>
+      <span class="wl-item" data-mask="?d?d?d?d">4-digit PIN</span>
+      <span class="wl-item" data-mask="?d?d?d?d?d?d">6 digits</span>
+      <span class="wl-item" data-mask="?u?l?l?l?l?d?d">Dogcat12 style</span>
+      <span class="wl-item" data-mask="?a?a?a?a">any 4 chars</span>
+    </div>
+    <div class="est" id="est-mask"></div>
+    <div class="field"><span>custom set ?1</span><input type="text" id="c1"></div>
+    <div class="field"><span>custom set ?2</span><input type="text" id="c2"></div>
+    <div class="field"><span>custom set ?3</span><input type="text" id="c3"></div>
+    <div class="field"><span>custom set ?4</span><input type="text" id="c4"></div>
+  </div>
+
+  <div class="panel hidden" id="p-brute">
+    <div class="field">
+      <span>charset</span>
+      <label class="ck"><input type="checkbox" data-cs="l" checked> lower</label>
+      <label class="ck"><input type="checkbox" data-cs="d"> digits</label>
+      <label class="ck"><input type="checkbox" data-cs="u"> upper</label>
+      <label class="ck"><input type="checkbox" data-cs="s"> symbols</label>
+      <label class="ck"><input type="checkbox" data-cs="h"> hex</label>
+      <label class="ck"><input type="checkbox" data-cs="a"> all</label>
+    </div>
+    <div class="field"><span>custom charset (appended)</span><input type="text" id="brcustom"></div>
+    <div class="row">
+      <div><span class="note">min length</span><input type="number" id="minlen" value="1" min="0" max="64" style="width:90px"></div>
+      <div><span class="note">max length</span><input type="number" id="maxlen" value="6" min="0" max="64" style="width:90px"></div>
+    </div>
+    <div class="est" id="est-brute"></div>
+  </div>
+
+  <div class="panel hidden" id="p-hybrid">
+    <div class="field"><span>wordlist path - the words to start from</span><input type="text" id="wlpath2"></div>
+    <div class="field"><span>prefix = fixed text before every word (optional)</span><input type="text" id="prefix"></div>
+    <div class="field"><span>suffix mask = generated text after every word, e.g. ?d?d makes word00..word99 (optional)</span><input type="text" id="suffixmask"></div>
+    <div class="est" id="est-hybrid"></div>
+  </div>
+
+  <div class="panel hidden" id="p-verify">
+    <div class="field"><span>candidate passwords, one per line - checked instantly against the archive</span>
+      <textarea id="verifylist" placeholder="password1&#10;123456&#10;letmein"></textarea></div>
+    <div class="row"><button class="btn" id="verifybtn">check passwords</button></div>
+    <div id="verifyout" class="note"></div>
+  </div>
+
+  <details class="panel" id="p-cloud" style="margin-top:10px">
+    <summary class="note">cloud boost - github actions runners (off unless you enable it here)</summary>
+    <div class="field"><label class="ck"><input type="checkbox" id="ghon"> use github actions for this attack (brute/mask on an AES member)</label></div>
+    <div class="field"><span>github repo (owner/name) - must be public with this project pushed to it</span><input type="text" id="ghrepo" placeholder="you/zippass"></div>
+    <div class="field"><span>token - optional, empty = use your local gh cli login (recommended)</span><input type="password" id="ghtoken" autocomplete="off" placeholder="gh auth login handles this"></div>
+    <div class="row">
+      <div><span class="note">shard vms (20 = the free 80-core fan-out)</span><input type="number" id="ghshards" value="20" min="1" max="20" style="width:70px"></div>
+      <div><span class="note">branch (empty = default)</span><input type="text" id="ghref" style="width:140px"></div>
+    </div>
+    <div class="note">one dispatch fans out N runner vms (4 vcpu each, free on a public repo, 6h cap per run). runners only ever see the 2-byte verifier spec - never your archive - and results are confirmed against the real file here before anything is called a hit. the token stays in memory only. setup + terms: see the readme section "cloud boost".</div>
+  </details>
+
+  <div class="row">
+    <span class="note">workers (leave empty = automatic)</span>
+    <input type="number" id="workers" placeholder="auto" min="1" max="64" style="width:80px">
+    <button class="btn primary" id="start">start attack</button>
+    <button class="btn stop hidden" id="stop">stop</button>
+    <span id="startmsg" class="note"></span>
+  </div>
+</section>
+
+<section class="card hidden" id="progcard">
+  <h2>progress - <span id="state">running</span></h2>
+  <div class="note">found = password recovered · exhausted = whole space tried, nothing here · stopped = you stopped it · error = problem, see log below</div>
+  <div class="bar" id="bar"><i></i></div>
+  <div class="grid" style="margin-top:10px">
+    <div class="stat"><b id="s-done">0</b><span>tried</span></div>
+    <div class="stat"><b id="s-rate">0</b><span>tries/sec</span></div>
+    <div class="stat"><b id="s-total">-</b><span>space</span></div>
+    <div class="stat"><b id="s-eta">-</b><span>eta</span></div>
+    <div class="stat"><b id="s-elapsed">0s</b><span>elapsed</span></div>
+  </div>
+  <div id="found" class="hidden" style="margin-top:12px"></div>
+  <div id="ghlink" class="note" style="margin-top:6px"></div>
+  <div id="log" style="margin-top:12px"></div>
+</section>
+
+<section class="card hidden" id="exportcard">
+  <h2>gpu export</h2>
+  <button class="btn" id="exbtn">build hash for john / hashcat</button>
+  <pre id="exout" class="hidden"></pre>
+</section>
+
+</main>
+<script>
+const $ = id => document.getElementById(id);
+let zip = null, zipName = "", job = null, pollTimer = null, members = [], pinned = null, mode = "dict";
+const CS = { l:"abcdefghijklmnopqrstuvwxyz", u:"ABCDEFGHIJKLMNOPQRSTUVWXYZ", d:"0123456789",
+             s:"!@#$%^&*()-_=+[]{};:'\",.<>/?\\|`~ ", h:"0123456789abcdef",
+             a:"abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789!@#$%^&*()-_=+[]{};:'\",.<>/?\\|`~ " };
+
+// upload + analyze -----------------------------------------------------------
+const drop = $("drop");
+drop.onclick = () => $("file").click();
+$("file").onchange = e => e.target.files[0] && upload(e.target.files[0]);
+["dragover","dragenter"].forEach(ev => drop.addEventListener(ev, e => { e.preventDefault(); drop.classList.add("drag"); }));
+["dragleave","drop"].forEach(ev => drop.addEventListener(ev, e => { e.preventDefault(); drop.classList.remove("drag"); }));
+drop.addEventListener("drop", e => { const f = e.dataTransfer.files[0]; if (f) upload(f); });
+
+async function upload(f) {
+  const fd = new FormData(); fd.append("file", f);
+  const r = await (await fetch("/api/v1/uploads", { method:"POST", body:fd })).json();
+  if (r.error) return $("fileinfo").textContent = "upload failed: " + r.error;
+  showArchive(r.id, r.name, r.size);
+}
+
+async function showArchive(zid, name, size) {
+  zip = zid; zipName = name;
+  const a = await (await fetch("/api/v1/archives/" + zip)).json();
+  if (a.error) return $("fileinfo").textContent = "analyze failed: " + a.error;
+  members = a.members; pinned = null;
+  $("members").innerHTML = members.map(m => {
+    const kind = !m.encrypted ? `<span class="badge b-none">plain</span>`
+      : m.kind === "aes" ? `<span class="badge b-aes">AES</span>`
+      : `<span class="badge b-zc">zipcrypto</span>`;
+    return `<tr class="member" data-i="${m.index}" data-enc="${m.encrypted}">
+      <td>${m.name}</td><td>${(m.csize/1024).toFixed(1)} KB</td><td>${kind}</td></tr>`;
+  }).join("");
+  document.querySelectorAll(".member").forEach(tr => tr.onclick = () => {
+    if (tr.dataset.enc !== "true") return;
+    document.querySelectorAll(".member").forEach(x => x.classList.remove("sel"));
+    tr.classList.add("sel"); pinned = +tr.dataset.i;
+  });
+  $("memberscard").classList.remove("hidden");
+  $("attackcard").classList.remove("hidden");
+  $("exportcard").classList.remove("hidden");
+  const kinds = Object.entries(a.kinds).map(([k,v]) => `${v}x ${k}`).join(", ") || "none";
+  $("fileinfo").textContent = `${name} (${(size/1048576).toFixed(2)} MB) - ${a.encrypted} encrypted member(s): ${kinds}`;
+  wlList();
+}
+
+// tabs -----------------------------------------------------------------------
+const MODEHELP = {
+  dict: "tries passwords from a list file - start here, most real passwords are on the big lists. pick a list below or use a quick-start button above.",
+  mask: "tries every password matching a pattern: ?d?d?d?d = 0000..9999. each ?x is one character slot: ?l lower, ?u upper, ?d digit, ?s symbol, ?h hex, ?a all, ?1..?4 = your own sets below.",
+  brute: "tries EVERY combination of characters up to the max length. fine up to 6 chars, hopeless beyond - watch the size estimate.",
+  hybrid: "list words + a mask after them: suffix ?d?d tries word00..word99 for every word. prefix = fixed text before each word.",
+  verify: "paste passwords to test them instantly - no attack needed."
+};
+function setMode(m) {
+  mode = m;
+  document.querySelectorAll(".tab").forEach(x => x.classList.toggle("active", x.dataset.mode === m));
+  document.querySelectorAll(".panel").forEach(p => p.classList.add("hidden"));
+  $("p-" + m).classList.remove("hidden");
+  $("start").classList.toggle("hidden", m === "verify");
+  $("modehelp").textContent = MODEHELP[m] || "";
+  estimate();
+}
+document.querySelectorAll(".tab").forEach(t => t.onclick = () => setMode(t.dataset.mode));
+
+// wordlists ------------------------------------------------------------------
+let WLS = [];   // wordlists the server sees - quick-start buttons pick from here
+async function wlList() {
+  const d = await (await fetch("/api/v1/wordlists")).json();
+  WLS = d.items || [];
+  $("wllist").innerHTML = WLS.map(w =>
+    `<span class="wl-item" data-p="${w.path}" title="${(w.size/1048576).toFixed(1)} MB">${w.name}</span>`).join("") || "<span class='note'>no wordlist files in ./wordlists yet - the quick-start buttons need them there</span>";
+  $("wllist").querySelectorAll(".wl-item").forEach(x => x.onclick = () => {
+    $("wlpath").value = x.dataset.p; $("wlpath2").value = x.dataset.p;
+  });
+}
+$("wlfile").onchange = async e => {
+  if (!e.target.files[0]) return;
+  const fd = new FormData(); fd.append("file", e.target.files[0]);
+  await fetch("/api/v1/wordlists", { method:"POST", body:fd });
+  wlList();
+};
+
+// quick-start buttons ----------------------------------------------------------
+function findList(prefix) {
+  const it = WLS.find(w => w.name.toLowerCase().startsWith(prefix));
+  return it ? it.path : null;
+}
+const QUICK = {
+  common: () => { const p = findList("common-passwords-1m"); if (!p) return "missing ./wordlists/common-passwords-1m.txt";
+    setMode("dict"); $("wlpath").value = p; return null; },
+  pin: () => { setMode("brute");
+    document.querySelectorAll("input[data-cs]").forEach(c => c.checked = c.dataset.cs === "d");
+    $("brcustom").value = ""; $("minlen").value = 1; $("maxlen").value = 6; return null; },
+  rockyou: () => { const p = findList("rockyou"); if (!p) return "missing ./wordlists/rockyou.txt";
+    setMode("dict"); $("wlpath").value = p; return null; },
+  hyb: () => { const p = findList("common-passwords-1m"); if (!p) return "missing ./wordlists/common-passwords-1m.txt";
+    setMode("hybrid"); $("wlpath2").value = p; $("prefix").value = ""; $("suffixmask").value = "?d?d"; return null; },
+};
+document.querySelectorAll("#qsrow .qs").forEach(b => b.onclick = () => {
+  if (!zip) { $("startmsg").textContent = "drop your .zip first (step 1 above)"; return; }
+  if ($("start").disabled) { $("startmsg").textContent = "an attack is already running - stop it first"; return; }
+  $("startmsg").textContent = "";
+  const err = QUICK[b.dataset.qs]();
+  if (err) { $("startmsg").textContent = err; return; }
+  $("start").click();
+});
+
+// live size estimate -----------------------------------------------------------
+// rough aggregate rates measured on this box against a multi-MB member:
+// zipcrypto ~2-3M/s on the numpy+numba fast path (conservative 2M feeds the
+// size hint); AES is pbkdf2-bound - the 1000-iteration KDF is fixed by the
+// format - and ran 23.1k/s aggregate live with the rust 8-way avx2 kernel
+// (65x plain openssl per candidate, but no CPU reaches millions/s; hard
+// aes belongs on the gpu export). a real run always shows its own
+// tries/sec and eta in the progress card.
+const RATE_ZC = 2000000;
+const RATE_AES = 20000;
+function rate() {
+  const enc = (members || []).filter(m => m.encrypted);
+  if (!enc.length) return RATE_ZC;
+  const sel = pinned != null ? members.find(m => m.index === pinned) : null;
+  const aes = sel ? sel.kind === "aes" : enc.some(m => m.kind === "aes");
+  return aes ? RATE_AES : RATE_ZC;
+}
+const fmtBig = n => Math.round(n).toLocaleString("en-US");
+function fmtEst(s) {
+  if (s < 90) return Math.max(1, Math.round(s)) + " sec";
+  if (s < 5400) return Math.round(s / 60) + " min";
+  if (s < 172800) return Math.round(s / 3600) + " hours";
+  if (s < 63120000) return Math.round(s / 86400) + " days";
+  return (s / 31536000).toPrecision(3) + " years";
+}
+function showEst(id, n, prefix) {
+  const el = $(id);
+  if (!n || n < 1) { el.textContent = prefix || "fill in the fields above"; el.className = "est"; return; }
+  const t = n / rate();
+  el.textContent = (prefix ? prefix + " - " : "") + `≈ ${fmtBig(n)} passwords ≈ ${fmtEst(t)} on this PC`;
+  el.className = "est " + (t <= 3600 ? "good" : t <= 86400 ? "warn" : "bad");
+}
+function maskCount(mstr) {
+  const custom = customs();
+  let n = 1, seen = false;
+  for (let i = 0; i < mstr.length; i++) {
+    if (mstr[i] !== "?") continue;
+    const t = mstr[i + 1]; i++;
+    if (t === undefined) break;
+    const size = t === "l" ? 26 : t === "u" ? 26 : t === "d" ? 10 :
+      t === "s" ? CS.s.length : t === "h" ? 16 : t === "a" ? CS.a.length :
+      /^[1-4]$/.test(t) ? (custom["c" + t] || "").length : 1;
+    n *= Math.max(size, 1); seen = true;
+  }
+  return seen ? n : 0;
+}
+function bruteCount() {
+  const L = charsetStr().length; if (!L) return 0;
+  let n = 0;
+  for (let k = Math.max(+$("minlen").value, 0); k <= +$("maxlen").value; k++) n += Math.pow(L, k);
+  return n;
+}
+function estimate() {
+  if (mode === "mask") showEst("est-mask", maskCount($("mask").value));
+  else if (mode === "brute") showEst("est-brute", bruteCount());
+  else if (mode === "hybrid") {
+    const n = maskCount($("suffixmask").value);
+    const it = WLS.find(w => w.path === $("wlpath2").value.trim());
+    if (!n) showEst("est-hybrid", 0, "add a suffix mask to see how big this gets");
+    else if (it) showEst("est-hybrid", Math.max(1, Math.round(it.size / 9.5)) * n, `list ≈ ${fmtBig(it.size / 9.5)} words`);
+    else showEst("est-hybrid", 0, `each list word gets ${fmtBig(n)} variants (typed path - size unknown)`);
+  }
+}
+document.querySelectorAll("#p-mask input, #p-brute input, #p-hybrid input").forEach(el => {
+  el.addEventListener("input", estimate); el.addEventListener("change", estimate);
+});
+document.querySelectorAll("#p-mask .wl-item").forEach(c => c.onclick = () => {
+  $("mask").value = c.dataset.mask; estimate();
+});
+setMode("dict");
+
+// config ---------------------------------------------------------------------
+function charsetStr() {
+  let s = "";
+  document.querySelectorAll("input[data-cs]").forEach(c => { if (c.checked) s += CS[c.dataset.cs]; });
+  return s + $("brcustom").value;
+}
+function customs() {
+  const o = {};
+  ["c1","c2","c3","c4"].forEach(id => { if ($(id).value) o[id] = $(id).value; });
+  return o;
+}
+function buildCfg() {
+  const w = $("workers").value ? +$("workers").value : undefined;
+  if (mode === "dict")  return { mode, wordlist: $("wlpath").value.trim(), workers:w };
+  if (mode === "mask")  return { mode, mask: $("mask").value, custom: customs(), workers:w };
+  if (mode === "brute") return { mode, charset: charsetStr(), min_len:+$("minlen").value, max_len:+$("maxlen").value, workers:w };
+  if (mode === "hybrid")return { mode, wordlist: $("wlpath2").value.trim(), prefix: $("prefix").value, suffix_mask: $("suffixmask").value, workers:w };
+}
+
+// cloud boost (github actions) ------------------------------------------------
+// repo/shards persist locally; the token never does - memory only, gone on refresh
+$("ghrepo").value = localStorage.getItem("ghrepo") || "";
+$("ghshards").value = localStorage.getItem("ghshards") || "20";
+["ghrepo", "ghshards"].forEach(id => $(id).addEventListener("change",
+  () => localStorage.setItem(id, $(id).value)));
+function ghCfg() {
+  if (!$("ghon").checked) return undefined;
+  const t = $("ghtoken").value.trim();
+  return { repo: $("ghrepo").value.trim(), token: t || undefined,
+           ref: $("ghref").value.trim() || undefined,
+           shards: +$("ghshards").value || 20 };
+}
+
+// run ------------------------------------------------------------------------
+$("start").onclick = async () => {
+  $("startmsg").textContent = "";
+  const r = await (await fetch("/api/v1/jobs", { method:"POST",
+    headers:{ "Content-Type":"application/json" },
+    body: JSON.stringify({ zip_id:zip, member_index:pinned, ...buildCfg(), gh: ghCfg() }) })).json();
+  if (r.error) return $("startmsg").textContent = r.error;
+  job = r.job_id;
+  $("progcard").classList.remove("hidden");
+  $("found").classList.add("hidden");
+  $("ghlink").textContent = "";
+  $("stop").classList.remove("hidden");
+  $("stop").disabled = false;
+  $("start").disabled = true;
+  poll();
+};
+$("stop").onclick = async () => {
+  if (!job) return;
+  $("state").textContent = "stopping";   // instant feedback - confirm lands on the next poll
+  $("stop").disabled = true;
+  try { await fetch("/api/v1/jobs/" + job + "/stop", { method:"POST" }); } catch (e) {}
+};
+
+const nf = n => (typeof n === "string" ? n : Math.round(n).toLocaleString("en-US"));
+const TERMINAL = ["found","exhausted","stopped","error"];
+function poll() {
+  pollTimer = setTimeout(poll, 600);
+  fetch("/api/v1/jobs/" + job).then(r => r.json()).then(d => {
+    if (d.error) {          // job pruned server-side - stop the loop, say so
+      clearTimeout(pollTimer);
+      $("state").textContent = "gone";
+      $("log").textContent = "job no longer held by the server (pruned or restarted)";
+      return;
+    }
+    $("state").textContent = d.state;
+    $("s-done").textContent = nf(d.done);
+    $("s-rate").textContent = nf(d.rate);
+    $("s-total").textContent = d.total == null ? "unknown" : nf(d.total);
+    $("s-eta").textContent = d.eta == null ? "-" : fmtT(d.eta);
+    $("s-elapsed").textContent = fmtT(d.elapsed);
+    const bar = $("bar");
+    if (d.total) { bar.classList.remove("ind"); bar.firstElementChild.style.width = Math.min(100, 100*d.done/Number(d.total)) + "%"; }
+    else bar.classList.add("ind");
+    $("log").textContent = d.log.join("\n");
+    $("ghlink").innerHTML = d.cloud && d.cloud.run_url
+      ? `cloud run: <a target="_blank" rel="noopener" href="${d.cloud.run_url}">${d.cloud.run_url}</a>` : "";
+    if (d.found) {
+      $("found").classList.remove("hidden");
+      $("found").textContent = "PASSWORD: " + d.found;
+    }
+    if (TERMINAL.includes(d.state)) {
+      clearTimeout(pollTimer);
+      $("stop").classList.add("hidden");
+      $("start").disabled = false;
+      if (d.state === "error") { $("found").textContent = "error: " + (d.error || ""); $("found").classList.remove("hidden"); }
+      if (d.state === "exhausted") { $("found").textContent = "exhausted - tried every candidate in this space, nothing here. the password is not this type: try a bigger list or another attack type."; $("found").classList.remove("hidden"); }
+    }
+  }).catch(() => {});
+}
+function fmtT(s) {
+  s = Math.round(s);
+  if (s < 60) return s + "s";
+  if (s < 3600) return Math.floor(s/60) + "m " + s%60 + "s";
+  return Math.floor(s/3600) + "h " + Math.floor(s%3600/60) + "m";
+}
+
+// verify ---------------------------------------------------------------------
+$("verifybtn").onclick = async () => {
+  const pwds = $("verifylist").value.split("\n").filter(x => x.length);
+  if (!pwds.length) return;
+  const d = await (await fetch("/api/v1/archives/" + zip + "/verify", { method:"POST",
+    headers:{ "Content-Type":"application/json" },
+    body: JSON.stringify({ passwords: pwds }) })).json();
+  if (d.error) return $("verifyout").textContent = d.error;
+  const rows = d.results.map(r =>
+    r.ok ? `<div class="vok">[+] "${r.password}" opens "${d.member}"</div>`
+         : `<div class="vbad">[-] "${r.password}"</div>`).join("");
+  $("verifyout").innerHTML = `<div class="note">target: ${d.member} (${d.kind})</div>` + rows +
+    (d.note ? `<div class="note">${d.note}</div>` : "");
+};
+
+// export ---------------------------------------------------------------------
+$("exbtn").onclick = async () => {
+  const d = await (await fetch("/api/v1/archives/" + zip + "/export")).json();
+  $("exout").classList.remove("hidden");
+  if (d.error) return $("exout").textContent = d.error;
+  $("exout").textContent =
+    `# save this line to hash.txt\n${d.hash}\n\n` + d.commands.map(c => "# " + c).join("\n") +
+    (d.found_hashcat ? "" : "\n\n# hashcat not found on this box - listed for reference");
+};
+
+// refresh survival -------------------------------------------------------------
+// attacks run entirely server-side, so a page refresh never stopped one - the
+// page just forgot it was watching. on load: restore the newest archive and
+// reattach the progress card to the newest job (preferring a live one).
+async function restore() {
+  try {
+    const jl = await (await fetch("/api/v1/jobs")).json();
+    const items = jl.items || [];
+    const active = items.find(j => !TERMINAL.includes(j.state)) || items[0];
+    const ups = (await (await fetch("/api/v1/uploads")).json()).items || [];
+    if (!ups.length) return;
+    const zid = (active && ups.some(u => u.id === active.zip_id)) ? active.zip_id : ups[0].id;
+    const u = ups.find(x => x.id === zid);
+    await showArchive(zid, u.name, u.size);
+    if (!active) return;
+    job = active.job_id;
+    $("progcard").classList.remove("hidden");
+    if (!TERMINAL.includes(active.state)) {   // still running - keep controlling it
+      $("stop").classList.remove("hidden");
+      $("stop").disabled = false;
+      $("start").disabled = true;
+    }
+    poll();
+  } catch (e) { /* server unreachable - stay on the fresh page */ }
+}
+restore();
+</script>
+</body>
+</html>
