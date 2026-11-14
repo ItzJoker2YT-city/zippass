@@ -7,6 +7,7 @@
 # collects the artifacts, sorts passes by global index and confirms them
 # against the real archive. stdlib-only python on the runner; the spec
 # arrives through env vars (never interpolated into the script text).
+# registered: yes
 name: zippass-crack
 
 on:
