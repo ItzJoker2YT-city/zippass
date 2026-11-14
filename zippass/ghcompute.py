@@ -51,9 +51,25 @@ def _token(cfg: dict) -> str:
     return tok
 
 
+class _NoAuthRedirect(urllib.request.HTTPRedirectHandler):
+    """artifact downloads 302 to a signed azure blob url - that url
+    carries its own auth in the query string, and forwarding our Bearer
+    header to a foreign host makes storage reject the request (401)."""
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        new = super().redirect_request(req, fp, code, msg, headers, newurl)
+        if new is not None:
+            new.headers.pop("Authorization", None)
+        return new
+
+
+_OPENER = urllib.request.build_opener(_NoAuthRedirect)
+
+
 def _api(method: str, repo: str, token: str, path: str, body=None):
     """one github rest call; returns parsed json (dict/list)."""
-    url = f"{API}/repos/{repo}/{path}" if repo else f"{API}/{path}"
+    base = f"{API}/repos/{repo}" if repo else API
+    url = f"{base}/{path}" if path else base
     data = json.dumps(body).encode() if body is not None else None
     req = urllib.request.Request(url, data=data, method=method, headers={
         "Authorization": f"Bearer {token}",
@@ -139,7 +155,7 @@ def collect(repo: str, token: str, run_id: int) -> list:
             f"{API}/repos/{repo}/actions/artifacts/{a['id']}/zip",
             headers={"Authorization": f"Bearer {token}",
                      "User-Agent": "zippass-local"})
-        with urllib.request.urlopen(req, timeout=60) as r:
+        with _OPENER.open(req, timeout=120) as r:
             hits += parse_found(r.read())
     hits.sort(key=lambda h: h[0])
     return hits
