@@ -54,9 +54,10 @@ jobs:
 
       - name: build rust verifier
         run: |
-          cargo build --release --manifest-path rust/aesfast_rs/Cargo.toml
-          mkdir -p zippass/_native
-          cp target/release/libaesfast_rs.so zippass/_native/
+          cd rust/aesfast_rs
+          cargo build --release
+          mkdir -p ../../zippass/_native
+          cp target/release/libaesfast_rs.so ../../zippass/_native/
 
       - name: scan shard
         env:
