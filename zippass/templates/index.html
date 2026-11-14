@@ -51,6 +51,14 @@
   .tab.active { color:var(--ok); border-color:var(--ok); }
   .panel .field { margin-top:8px; }
   .panel .field span { display:block; font-size:11px; color:var(--dim); margin-bottom:3px; }
+  /* cloud boost box - own class so the tab switcher (which hides .panel)
+     can never hide it; dashed border + bold summary so it reads as a
+     distinct opt-in feature, not part of the current mode's settings */
+  .cloud { border:1px dashed #30363d; border-radius:6px; padding:10px 12px; margin-top:12px; }
+  .cloud summary { font-weight:600; cursor:pointer; color:#58a6ff; user-select:none; }
+  .cloud[open] summary { margin-bottom:8px; }
+  .cloud .field { margin-top:8px; }
+  .cloud .field span { display:block; font-size:11px; color:var(--dim); margin-bottom:3px; }
   pre { background:#0d1117; border:1px solid var(--line); padding:10px; border-radius:6px; overflow:auto; font-size:12px; }
   .note { color:var(--dim); font-size:12px; margin-top:8px; }
   .vok { color:var(--ok); } .vbad { color:var(--bad); }
@@ -160,8 +168,8 @@
     <div id="verifyout" class="note"></div>
   </div>
 
-  <details class="panel" id="p-cloud" style="margin-top:10px">
-    <summary class="note">cloud boost - github actions runners (off unless you enable it here)</summary>
+  <details class="cloud" id="p-cloud">
+    <summary>☁ cloud boost - github actions runners (off unless you enable it here)</summary>
     <div class="field"><label class="ck"><input type="checkbox" id="ghon"> use github actions for this attack (brute/mask on an AES member)</label></div>
     <div class="field"><span>github repo (owner/name) - must be public with this project pushed to it</span><input type="text" id="ghrepo" placeholder="you/zippass"></div>
     <div class="field"><span>token - optional, empty = use your local gh cli login (recommended)</span><input type="password" id="ghtoken" autocomplete="off" placeholder="gh auth login handles this"></div>
@@ -262,6 +270,8 @@ const MODEHELP = {
 function setMode(m) {
   mode = m;
   document.querySelectorAll(".tab").forEach(x => x.classList.toggle("active", x.dataset.mode === m));
+  // hide the mode panels only - p-cloud (cloud boost) is mode-independent
+  // and must stay visible under every tab
   document.querySelectorAll(".panel").forEach(p => p.classList.add("hidden"));
   $("p-" + m).classList.remove("hidden");
   $("start").classList.toggle("hidden", m === "verify");
