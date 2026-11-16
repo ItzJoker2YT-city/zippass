@@ -125,7 +125,12 @@ def start_job():
         cfg = _validate_cfg(d)
         gh = _validate_gh(d.get("gh"))
         if gh and member["kind"] != "aes":
-            raise ValueError("cloud boost supports WinZip AES members only")
+            raise ValueError(
+                "cloud boost supports WinZip AES members only - this member "
+                "is zipcrypto, which verifies locally at ~2M tries/s "
+                "(faster than the cloud shards would be); just untick cloud "
+                "boost and run it here. cloud exists because AES's 1000-"
+                "iteration PBKDF2 is the slow part")
         if gh and cfg["mode"] not in ("brute", "mask"):
             raise ValueError("cloud boost supports brute/mask attacks only "
                              "(wordlists would have to be pushed to the repo)")
