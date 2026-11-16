@@ -414,8 +414,10 @@ function buildCfg() {
 }
 
 // cloud boost (github actions) ------------------------------------------------
-// repo/shards persist locally; the token never does - memory only, gone on refresh
-$("ghrepo").value = localStorage.getItem("ghrepo") || "";
+// the repo field ships prefilled with the user's crack repo; a value saved
+// to localStorage wins once they've changed it. the token never persists -
+// memory only, gone on refresh
+$("ghrepo").value = localStorage.getItem("ghrepo") || "ItzJoker2YT-city/zippass";
 $("ghshards").value = localStorage.getItem("ghshards") || "20";
 ["ghrepo", "ghshards"].forEach(id => $(id).addEventListener("change",
   () => localStorage.setItem(id, $(id).value)));
