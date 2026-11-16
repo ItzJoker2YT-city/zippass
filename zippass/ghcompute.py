@@ -259,7 +259,7 @@ def run_gh_job(job) -> None:
                 last_shards = prog["done"]
                 job.logline(f"cloud shards: {prog['done']}/{prog['total']} "
                             f"finished - live per-shard counts: "
-                            f"{run['html_url']}/actions")
+                            f"{run['html_url']}")
             if prog["status"] == "completed":
                 concl = prog["conclusion"]
                 break

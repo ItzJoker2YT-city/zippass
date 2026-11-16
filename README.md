@@ -150,6 +150,15 @@ project" and prohibit disproportionate server burden - a repo used as a
 crack farm is the usage pattern their abuse systems look for and can
 cost the account. Use it knowingly, for your own files, on modest runs.
 
+What you see while it runs: the progress card's tried counter climbs as
+shard vms finish (each shard ≈ total/shards), the log prints
+"cloud shards: 7/20 finished", and a link opens the run page where every
+shard's live log streams "scanned X/Y candidates" every 60s. When the
+run completes, the app reads the exact per-shard totals from those logs
+("exact cloud total: N candidates tried"), downloads any found-*
+artifacts, and confirms passes in global candidate order against the
+real archive before calling anything a hit.
+
 ## Quickstart
 
 ```
