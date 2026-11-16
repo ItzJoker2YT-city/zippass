@@ -126,14 +126,40 @@ def _iso_cutoff(started: float) -> str:
 
 
 def run_progress(repo: str, token: str, run_id: int) -> dict:
-    """{status, conclusion, done, total} for the run's crack jobs."""
+    """{status, conclusion, done, total, job_ids} for the run's crack jobs."""
     run = _api("GET", repo, token, f"actions/runs/{run_id}")
     jobs = _api("GET", repo, token, f"actions/runs/{run_id}/jobs?per_page=100")
     crack = [j for j in jobs.get("jobs", [])
              if j.get("name", "").startswith("crack")]
     done = sum(1 for j in crack if j.get("status") == "completed")
     return {"status": run.get("status"), "conclusion": run.get("conclusion"),
-            "done": done, "total": len(crack)}
+            "done": done, "total": len(crack),
+            "job_ids": [j["id"] for j in crack]}
+
+
+_LOG_TRIED = re.compile(r"scanned\s+(\d+)\s+candidates")
+
+
+def parse_job_tried(log_text: str):
+    """the shard's exact tried count from its log's last 'scanned N
+    candidates' line (progress prints + the final summary share one
+    phrasing); None when the log carries no progress lines."""
+    found = _LOG_TRIED.findall(log_text or "")
+    return int(found[-1]) if found else None
+
+
+def job_log(repo: str, token: str, job_id: int) -> str:
+    """one crack job's log text (redirects to blob storage - the
+    no-auth redirect opener applies there too)."""
+    req = urllib.request.Request(
+        f"{API}/repos/{repo}/actions/jobs/{job_id}/logs",
+        headers={"Authorization": f"Bearer {token}",
+                 "User-Agent": "zippass-local"})
+    try:
+        with _OPENER.open(req, timeout=60) as r:
+            return r.read().decode("utf-8", "replace")
+    except (urllib.error.URLError, OSError):
+        return ""                     # one unreadable log must not fail the job
 
 
 def cancel(repo: str, token: str, run_id: int) -> None:
@@ -219,7 +245,7 @@ def run_gh_job(job) -> None:
             job.gh_run_url = run["html_url"]
         job.logline(f"run #{run['run_number']}: {run['html_url']}")
 
-        prog, concl = {}, None
+        prog, concl, last_shards = {}, None, -1
         while True:
             if job.stop.is_set():
                 cancel(gh["repo"], token, run["id"])
@@ -229,10 +255,29 @@ def run_gh_job(job) -> None:
             if total and prog["total"]:
                 with job.lock:
                     job.done = int(total * prog["done"] / prog["total"])
+            if prog["done"] != last_shards:
+                last_shards = prog["done"]
+                job.logline(f"cloud shards: {prog['done']}/{prog['total']} "
+                            f"finished - live per-shard counts: "
+                            f"{run['html_url']}/actions")
             if prog["status"] == "completed":
                 concl = prog["conclusion"]
                 break
             time.sleep(config.GH_POLL_SECS)
+
+        # exact tried total from the shards' logs (progress prints + final
+        # summaries); approximate per-shard math only if a log is unreadable
+        exact_total, exact_ok = 0, True
+        for jid in prog.get("job_ids", []):
+            n = parse_job_tried(job_log(gh["repo"], token, jid))
+            if n is None:
+                exact_ok = False          # one unreadable log -> keep estimate
+                break
+            exact_total += n
+        if exact_ok and prog.get("job_ids"):
+            with job.lock:
+                job.done = exact_total
+            job.logline(f"exact cloud total: {exact_total:,} candidates tried")
 
         passes = collect(gh["repo"], token, run["id"])
         job.logline(f"{len(passes)} verifier pass(es) collected - "

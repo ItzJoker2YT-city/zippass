@@ -9,12 +9,17 @@ the app-side collector sorts passes by global index across all shards
 and confirms them in order against the real archive, so the verdict
 semantics stay identical to a purely local scan (first confirmed pass
 in candidate order wins).
+
+stdout carries progress the app and the github run page can read live:
+"shard k/N: scanned X/Y candidates" every ~60s and once at the end - the
+app sums these lines after the run for an exact tried count.
 """
 import argparse
 import hashlib
 import json
 import os
 import sys
+import time
 
 from . import candidates as cand
 
@@ -28,6 +33,7 @@ except Exception:                                   # pragma: no cover
     aesfast = None
 
 BATCH = 256
+PROGRESS_SECS = 60.0
 
 
 def verifier_for(salt: bytes, dklen: int, pv: bytes):
@@ -82,9 +88,10 @@ def space_of(spec: dict):
     raise SystemExit(f"unsupported mode for cloud shards: {spec['mode']!r}")
 
 
-def scan_shard(spec: dict, shard: int, shards: int):
+def scan_shard(spec: dict, shard: int, shards: int, shout=lambda *a: None):
     """scan one shard and return (passes, tried) - passes carry the
-    password bytes looked up from the stream position of each hit."""
+    password bytes looked up from the stream position of each hit.
+    shout(msg) receives a progress line roughly every PROGRESS_SECS."""
     salt = bytes.fromhex(spec["salt_hex"])
     dklen, pv = spec["dklen"], bytes.fromhex(spec["pv_hex"])
     total, make_iter = space_of(spec)
@@ -94,6 +101,7 @@ def scan_shard(spec: dict, shard: int, shards: int):
     verify = verifier_for(salt, dklen, pv)
     stream = make_iter(lo, count)
     passes, tried, batch = [], 0, []
+    next_shout = time.monotonic() + PROGRESS_SECS
     for pwd in stream:
         batch.append(pwd)
         tried += 1
@@ -102,6 +110,11 @@ def scan_shard(spec: dict, shard: int, shards: int):
         for j in verify(batch):
             passes.append((lo + tried - len(batch) + j, batch[j]))
         batch = []
+        now = time.monotonic()
+        if now >= next_shout:
+            shout(f"shard {shard}/{shards}: scanned {tried}/{count} candidates, "
+                  f"{len(passes)} pass(es)")
+            next_shout = now + PROGRESS_SECS
     if batch:
         for j in verify(batch):
             passes.append((lo + tried - len(batch) + j, batch[j]))
@@ -120,13 +133,14 @@ def main() -> None:
     shards = max(1, min(64, args.shards))
     shard = max(0, min(shards - 1, args.shard))
     spec = json.loads(args.spec)
-    passes, tried = scan_shard(spec, shard, shards)
+    passes, tried = scan_shard(spec, shard, shards,
+                               shout=lambda m: print(m, flush=True))
     if passes:
         with open(args.out, "w", encoding="utf-8") as fh:
             for i, pwd in passes:
                 fh.write(json.dumps({"i": i, "p": pwd.decode("utf-8")}) + "\n")
     print(f"shard {shard}/{shards}: scanned {tried} candidates, "
-          f"{len(passes)} verifier pass(es)")
+          f"{len(passes)} verifier pass(es)", flush=True)
 
 
 if __name__ == "__main__":

@@ -116,6 +116,30 @@ def test_ghshard_rejects_wordlist_modes(tmp_path):
         ghshard.scan_shard(spec, 0, 1)
 
 
+# ---------------------------------------------------------------- progress
+def test_ghshard_shouts_progress(tmp_path, monkeypatch):
+    """the runner's stdout must carry 'scanned X/Y candidates' lines the
+    app and the github run page can read - interval forced to 0 here."""
+    monkeypatch.setattr(ghshard, "PROGRESS_SECS", 0)
+    path = str(tmp_path / "aes.zip")
+    make_aes_zip(path, b"q9z")
+    meta = cryptoparse.pick_member(cryptoparse.parse_members(path))
+    spec = ghcompute.build_spec(
+        meta, {"mode": "brute", "charset": CHARSET, "min_len": 1, "max_len": 3})
+    lines = []
+    ghshard.scan_shard(spec, 0, 1, shout=lines.append)
+    assert lines and all("scanned" in l and "candidates" in l for l in lines)
+
+
+def test_parse_job_tried_takes_last_count():
+    log = ("2026-01-01 shard 3/20: scanned 1000/24000 candidates, 0 pass(es)\n"
+           "2026-01-01 shard 3/20: scanned 24000/24000 candidates, 1 pass(es)\n"
+           "shard 3/20: scanned 24000 candidates, 1 verifier pass(es)\n")
+    assert ghcompute.parse_job_tried(log) == 24000
+    assert ghcompute.parse_job_tried("no progress here") is None
+    assert ghcompute.parse_job_tried("") is None
+
+
 # ---------------------------------------------------------------- boundary
 def test_validate_gh_accepts_and_normalizes():
     g = routes._validate_gh({"repo": " me/zippass ", "shards": "12"})
