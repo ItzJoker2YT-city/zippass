@@ -52,8 +52,6 @@ class Job:
         self.found = None
         self.sample = None
         self.error = None
-        self.gh = None            # cloud config when this job is offloaded
-        self.gh_run_url = None    # set by ghcompute once the run registers
         self.started = time.time()          # wall clock: display + prune order
         self.started_mono = time.monotonic()  # clock-jump-proof duration math
         self.ended = None

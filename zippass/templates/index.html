@@ -49,16 +49,9 @@
   .tabs { display:flex; gap:6px; margin-bottom:12px; flex-wrap:wrap; }
   .tab { padding:6px 12px; background:none; border:1px solid var(--line); border-radius:6px; color:var(--dim); cursor:pointer; font:inherit; }
   .tab.active { color:var(--ok); border-color:var(--ok); }
+  /* mode settings panels */
   .panel .field { margin-top:8px; }
   .panel .field span { display:block; font-size:11px; color:var(--dim); margin-bottom:3px; }
-  /* cloud boost box - own class so the tab switcher (which hides .panel)
-     can never hide it; dashed border + bold summary so it reads as a
-     distinct opt-in feature, not part of the current mode's settings */
-  .cloud { border:1px dashed #30363d; border-radius:6px; padding:10px 12px; margin-top:12px; }
-  .cloud summary { font-weight:600; cursor:pointer; color:#58a6ff; user-select:none; }
-  .cloud[open] summary { margin-bottom:8px; }
-  .cloud .field { margin-top:8px; }
-  .cloud .field span { display:block; font-size:11px; color:var(--dim); margin-bottom:3px; }
   pre { background:#0d1117; border:1px solid var(--line); padding:10px; border-radius:6px; overflow:auto; font-size:12px; }
   .note { color:var(--dim); font-size:12px; margin-top:8px; }
   .vok { color:var(--ok); } .vbad { color:var(--bad); }
@@ -168,18 +161,6 @@
     <div id="verifyout" class="note"></div>
   </div>
 
-  <details class="cloud" id="p-cloud">
-    <summary>☁ cloud boost - github actions runners (off unless you enable it here)</summary>
-    <div class="field"><label class="ck"><input type="checkbox" id="ghon"> use github actions for this attack (brute/mask on an AES member)</label></div>
-    <div class="field"><span>github repo (owner/name) - must be public with this project pushed to it</span><input type="text" id="ghrepo" placeholder="you/zippass"></div>
-    <div class="field"><span>token - optional, empty = use your local gh cli login (recommended)</span><input type="password" id="ghtoken" autocomplete="off" placeholder="gh auth login handles this"></div>
-    <div class="row">
-      <div><span class="note">shard vms (20 = the free 80-core fan-out)</span><input type="number" id="ghshards" value="20" min="1" max="20" style="width:70px"></div>
-      <div><span class="note">branch (empty = default)</span><input type="text" id="ghref" style="width:140px"></div>
-    </div>
-    <div class="note">one dispatch fans out N runner vms (4 vcpu each, free on a public repo, 6h cap per run). runners only ever see the 2-byte verifier spec - never your archive - and results are confirmed against the real file here before anything is called a hit. the token stays in memory only. setup + terms: see the readme section "cloud boost".</div>
-  </details>
-
   <div class="row">
     <span class="note">workers (leave empty = automatic)</span>
     <input type="number" id="workers" placeholder="auto" min="1" max="64" style="width:80px">
@@ -201,7 +182,6 @@
     <div class="stat"><b id="s-elapsed">0s</b><span>elapsed</span></div>
   </div>
   <div id="found" class="hidden" style="margin-top:12px"></div>
-  <div id="ghlink" class="note" style="margin-top:6px"></div>
   <div id="log" style="margin-top:12px"></div>
 </section>
 
@@ -270,8 +250,6 @@ const MODEHELP = {
 function setMode(m) {
   mode = m;
   document.querySelectorAll(".tab").forEach(x => x.classList.toggle("active", x.dataset.mode === m));
-  // hide the mode panels only - p-cloud (cloud boost) is mode-independent
-  // and must stay visible under every tab
   document.querySelectorAll(".panel").forEach(p => p.classList.add("hidden"));
   $("p-" + m).classList.remove("hidden");
   $("start").classList.toggle("hidden", m === "verify");
@@ -413,33 +391,16 @@ function buildCfg() {
   if (mode === "hybrid")return { mode, wordlist: $("wlpath2").value.trim(), prefix: $("prefix").value, suffix_mask: $("suffixmask").value, workers:w };
 }
 
-// cloud boost (github actions) ------------------------------------------------
-// the repo field ships prefilled with the user's crack repo; a value saved
-// to localStorage wins once they've changed it. the token never persists -
-// memory only, gone on refresh
-$("ghrepo").value = localStorage.getItem("ghrepo") || "ItzJoker2YT-city/zippass";
-$("ghshards").value = localStorage.getItem("ghshards") || "20";
-["ghrepo", "ghshards"].forEach(id => $(id).addEventListener("change",
-  () => localStorage.setItem(id, $(id).value)));
-function ghCfg() {
-  if (!$("ghon").checked) return undefined;
-  const t = $("ghtoken").value.trim();
-  return { repo: $("ghrepo").value.trim(), token: t || undefined,
-           ref: $("ghref").value.trim() || undefined,
-           shards: +$("ghshards").value || 20 };
-}
-
 // run ------------------------------------------------------------------------
 $("start").onclick = async () => {
   $("startmsg").textContent = "";
   const r = await (await fetch("/api/v1/jobs", { method:"POST",
     headers:{ "Content-Type":"application/json" },
-    body: JSON.stringify({ zip_id:zip, member_index:pinned, ...buildCfg(), gh: ghCfg() }) })).json();
+    body: JSON.stringify({ zip_id:zip, member_index:pinned, ...buildCfg() }) })).json();
   if (r.error) return $("startmsg").textContent = r.error;
   job = r.job_id;
   $("progcard").classList.remove("hidden");
   $("found").classList.add("hidden");
-  $("ghlink").textContent = "";
   $("stop").classList.remove("hidden");
   $("stop").disabled = false;
   $("start").disabled = true;
@@ -473,8 +434,6 @@ function poll() {
     if (d.total) { bar.classList.remove("ind"); bar.firstElementChild.style.width = Math.min(100, 100*d.done/Number(d.total)) + "%"; }
     else bar.classList.add("ind");
     $("log").textContent = d.log.join("\n");
-    $("ghlink").innerHTML = d.cloud && d.cloud.run_url
-      ? `cloud run: <a target="_blank" rel="noopener" href="${d.cloud.run_url}">${d.cloud.run_url}</a>` : "";
     if (d.found) {
       $("found").classList.remove("hidden");
       $("found").textContent = "PASSWORD: " + d.found;

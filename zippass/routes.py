@@ -1,13 +1,12 @@
 """http boundary - thin controllers; all logic lives in the service modules."""
 import os
-import re
 import threading
 import time
 import uuid
 
 from flask import Blueprint, jsonify, render_template, request
 
-from . import bridge, candidates, config, cryptoparse, ghcompute, jobs, state
+from . import bridge, candidates, config, cryptoparse, jobs, state
 from .testers import tester_for
 
 bp = Blueprint("api", __name__, url_prefix="/api/v1")
@@ -123,17 +122,6 @@ def start_job():
     try:
         member = cryptoparse.pick_member(members, d.get("member_index"))
         cfg = _validate_cfg(d)
-        gh = _validate_gh(d.get("gh"))
-        if gh and member["kind"] != "aes":
-            raise ValueError(
-                "cloud boost supports WinZip AES members only - this member "
-                "is zipcrypto, which verifies locally at ~2M tries/s "
-                "(faster than the cloud shards would be); just untick cloud "
-                "boost and run it here. cloud exists because AES's 1000-"
-                "iteration PBKDF2 is the slow part")
-        if gh and cfg["mode"] not in ("brute", "mask"):
-            raise ValueError("cloud boost supports brute/mask attacks only "
-                             "(wordlists would have to be pushed to the repo)")
     except (ValueError, FileNotFoundError) as e:
         return jsonify(error=str(e)), 400
     except PermissionError as e:
@@ -141,40 +129,10 @@ def start_job():
 
     jid = uuid.uuid4().hex
     job = jobs.Job(jid, zid, member, cfg)
-    job.gh = gh
-    job.gh_run_url = None
     state.JOBS[jid] = job
     state.prune_jobs(config.MAX_JOBS_KEPT)
-    target = ghcompute.run_gh_job if gh else jobs.run_job
-    threading.Thread(target=target, args=(job,), daemon=True).start()
+    threading.Thread(target=jobs.run_job, args=(job,), daemon=True).start()
     return jsonify(job_id=jid), 201
-
-
-_REPO_RE = re.compile(r"^[\w.-]+/[\w.-]+$")
-
-
-def _validate_gh(g):
-    """optional github actions config; None = purely local job. the token
-    is optional (the local gh cli's login can supply it) and lives in
-    memory only."""
-    if not g:
-        return None
-    if not isinstance(g, dict):
-        raise ValueError("gh must be an object")
-    repo = str(g.get("repo") or "").strip()
-    if not _REPO_RE.match(repo):
-        raise ValueError("gh.repo must look like owner/name")
-    token = str(g.get("token") or "").strip() or None
-    if token and (len(token) > 256 or any(c.isspace() for c in token)):
-        raise ValueError("gh.token looks malformed")
-    ref = str(g.get("ref") or "").strip() or None
-    try:
-        shards = int(g.get("shards", config.GH_MAX_SHARDS))
-    except (TypeError, ValueError):
-        raise ValueError("gh.shards must be an integer") from None
-    if not 1 <= shards <= config.GH_MAX_SHARDS:
-        raise ValueError(f"gh.shards must be 1..{config.GH_MAX_SHARDS}")
-    return {"token": token, "repo": repo, "ref": ref, "shards": shards}
 
 
 def _validate_cfg(d: dict) -> dict:
@@ -267,9 +225,6 @@ def status(jid):
         log = list(job.log)
         d["total"] = str(total) if isinstance(total, int) and total > 2 ** 53 else total
     d.update(job_id=jid, elapsed=(job.ended or time.time()) - job.started, log=log)
-    if job.gh:
-        d["cloud"] = {"repo": job.gh["repo"], "shards": job.gh["shards"],
-                      "run_url": job.gh_run_url}   # token never leaves memory
     return jsonify(d)
 
 

@@ -24,11 +24,6 @@ MAX_VERIFY_PASSWORDS = 10000
 MAX_PASSWORD_LEN = 256
 LEN_LIMIT = 64  # upper bound for candidate length settings
 
-# github actions cloud boost (opt-in; see ghcompute.py)
-GH_MAX_SHARDS = int(os.getenv("ZIPPASS_GH_MAX_SHARDS", "20"))  # free-plan concurrency
-GH_POLL_SECS = int(os.getenv("ZIPPASS_GH_POLL_SECS", "20"))
-GH_DISPATCH_WAIT = int(os.getenv("ZIPPASS_GH_DISPATCH_WAIT", "300"))  # seconds
-
 CHARSETS = {
     "l": string.ascii_lowercase,
     "u": string.ascii_uppercase,

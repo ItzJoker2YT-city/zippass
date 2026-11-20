@@ -111,54 +111,6 @@ on the same job, ~4.1k/s with the numba kernel) - the 1000-iteration
 PBKDF2 is fixed by the format, so no CPU reaches millions/s on AES; that
 is the wall, not the code. Hard passwords belong on the GPU export path.
 
-## Cloud boost (GitHub Actions) - optional, off by default
-
-For AES spaces too big for local cores, an attack can fan out to GitHub
-Actions runners: under the attack form, open **cloud boost**, tick it,
-fill the repo (plus a token, or leave it empty to use your local `gh cli`
-login), pick shard vms (20 = the free plan's 20-concurrent-job cap on
-standard runners, 4 vCPU each -> **80 cores**). Everything else stays
-local: the workers only ever receive a json spec with the member's
-verifier fields (salt, dkLen, the 2-byte verifier) and the attack shape -
-**your archive never leaves this machine**. Each runner vM builds the
-rust verifier (`rust/aesfast_rs`), scans its slice of the space, and
-uploads a `found-shard-N` artifact only when its slice produced verifier
-passes (~1/65536 of candidates, so usually nothing). The app downloads
-the artifacts, sorts passes by global candidate index, and confirms each
-against the real archive before anything is called a hit - first
-confirmed pass wins, exactly the local scan's semantics. "Stop" cancels
-the run; the token lives in memory only and is never logged or written.
-
-One-time setup:
-
-1. Push this project to a **public** github repo (public = free,
-   unlimited minutes, 4-core runners; private repos get 2-core runners
-   and billed minutes). The workflow ships at `.github/workflows/
-   crack.yml`. `uploads/`, `wordlists/` and build outputs are gitignored
-   - check the pushed tree before making it public.
-2. Auth: either `gh auth login` locally (scopes `repo` + `workflow`), or
-   create a fine-grained PAT limited to that repo with **Actions: write**
-   and paste it in the ui.
-3. Start a brute/mask attack on an AES member with cloud boost ticked.
-
-Honest numbers and terms: ~80 free cores ≈ 0.4-0.6M tries/s aggregate
-(1B candidates ≈ 30-40 min; still far from gpu speeds - `hashcat
--m 13600` on a decent gpu does ~1-3M/s). Each run is capped at 6 h by
-the hosted runners. GitHub's terms restrict Actions to work "related to
-the production, testing, deployment, or publication of the software
-project" and prohibit disproportionate server burden - a repo used as a
-crack farm is the usage pattern their abuse systems look for and can
-cost the account. Use it knowingly, for your own files, on modest runs.
-
-What you see while it runs: the progress card's tried counter climbs as
-shard vms finish (each shard ≈ total/shards), the log prints
-"cloud shards: 7/20 finished", and a link opens the run page where every
-shard's live log streams "scanned X/Y candidates" every 60s. When the
-run completes, the app reads the exact per-shard totals from those logs
-("exact cloud total: N candidates tried"), downloads any found-*
-artifacts, and confirms passes in global candidate order against the
-real archive before calling anything a hit.
-
 ## Quickstart
 
 ```
