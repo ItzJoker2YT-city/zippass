@@ -104,6 +104,13 @@ def get_pool(workers_hint=None, heavy: bool = False):
             _POOL_DIRTY = False
         if _POOL is not None and want != _POOL_SIZE and _POOL_USERS == 0:
             doomed, _POOL = _POOL, None            # wrong width for this job
+        if doomed is not None:
+            # retire BEFORE spawning: on process-capped hosts (tiny vps
+            # sandboxes) spawning the replacement first wedges the app -
+            # the old pool never dies, so every later job fails with
+            # "can't start new thread". termination runs off-thread.
+            _retire_async(doomed)
+            log.info("worker pool retired for a fresh %d-process pool", want)
         if _POOL is None:
             _POOL = mp.Pool(processes=want)
             _POOL_SIZE = want
@@ -111,9 +118,6 @@ def get_pool(workers_hint=None, heavy: bool = False):
             log.info("worker pool spawned: %d processes", want)
         _POOL_USERS += 1
         pool, size, spawned = _POOL, _POOL_SIZE, _POOL_USERS == 1
-    if doomed is not None:
-        _retire_async(doomed)
-        log.info("worker pool retired for a fresh %d-process pool", want)
     return pool, size, spawned
 
 
