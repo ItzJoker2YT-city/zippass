@@ -1,18 +1,23 @@
 // aescrack.goose - winzip aes (ae-1/ae-2) password verifier + brute forcer,
-// written in goose. the hot algorithm is the same folded last-block pbkdf2
-// as rust/aesfast_rs: only the last output block is ever compared and each
-// block is independent, so one candidate costs 2*1000+2 sha1 compressions
-// instead of openssl's full-dklen chain (aes-256: 2002 vs 16000 blocks).
+// written in goose, multithreaded (default 4 workers, one per core).
 //
-// run self tests (no args, or fewer than the brute form needs):
-//   goose aescrack.goose
-// brute force:
-//   goose aescrack.goose <salt_hex> <dklen> <pv_hex> <charset> <min> <max>
-// e.g.
-//   goose aescrack.goose 000102030405060708090a0b0c0d0e0f 66 47a1 abcdefghijklmnopqrstuvwxyz0123456789 1 3
+// the hot algorithm is the folded last-block pbkdf2 of rust/aesfast_rs:
+// only the last output block is compared and each block is independent,
+// so one candidate costs 2*1000+2 sha1 compressions instead of openssl's
+// full-dklen chain (aes-256: 2002 vs 16000 blocks). the sha1 core uses a
+// 16-word ring schedule and fixed-array references (no slice overhead in
+// the round loop).
 //
-// this is the scalar reference port - no simd yet. the selftest vectors
-// were computed with python hashlib.pbkdf2_hmac (1000 iterations).
+// threading model: the global candidate space (ascending length, last
+// position fastest) is split into N contiguous shards; each worker is a
+// separate goose program with its own memory, fed one flat Job through a
+// typed queue. hits carry the exact global candidate index, so results
+// are order-identical to a single-threaded scan.
+//
+//   selftest:            aescrack.exe
+//   brute (4 threads):   aescrack.exe <salt_hex> <dklen> <pv_hex> <charset> <min> <max> [threads]
+//
+// selftest vectors computed with python hashlib.pbkdf2_hmac (1000 iters).
 
 import std;
 import os;
@@ -23,23 +28,22 @@ fn rol(x: u32, n: i32) -> u32 {
     return (x << n) | (x >> (32 - n));
 }
 
-// one compression over w[0..16] (big-endian message words); expands the
-// schedule in place and folds the result into h[0..5]. the length asserts
-// let the bounds-check eliminator drop the per-access checks in the loop.
-fn sha_block(h: u32[:], w: u32[:]) {
-    assert(h.len == 5 && w.len == 80);
-    for i in 16..80 {
-        w[i] = rol(w[i - 3] ^ w[i - 8] ^ w[i - 14] ^ w[i - 16], 1);
-    }
+// one compression over the ring w[0..16] (big-endian message words).
+// fixed-array reference params: indices are statically in range, so the
+// bounds-check eliminator has nothing left to charge the round loop for.
+fn sha_block(h: u32[5]&, w: u32[16]&) {
     var a = h[0];
     var b = h[1];
     var c = h[2];
     var d = h[3];
     var e = h[4];
-    // four constant-K loops instead of per-round branches: the sha1 round
-    // function and constant are fixed within each 20-round block
+    // four constant-K loops; the schedule updates the ring in place
     for i in 20 {
-        let t = rol(a, 5) + ((b & c) | (~b & d)) + e + 0x5A827999 + w[i];
+        if i >= 16 {
+            w[i & 15] = rol(w[(i + 13) & 15] ^ w[(i + 8) & 15]
+                            ^ w[(i + 2) & 15] ^ w[i & 15], 1);
+        }
+        let t = rol(a, 5) + ((b & c) | (~b & d)) + e + 0x5A827999 + w[i & 15];
         e = d;
         d = c;
         c = rol(b, 30);
@@ -47,7 +51,9 @@ fn sha_block(h: u32[:], w: u32[:]) {
         a = t;
     }
     for i in 20..40 {
-        let t = rol(a, 5) + (b ^ c ^ d) + e + 0x6ED9EBA1 + w[i];
+        w[i & 15] = rol(w[(i + 13) & 15] ^ w[(i + 8) & 15]
+                        ^ w[(i + 2) & 15] ^ w[i & 15], 1);
+        let t = rol(a, 5) + (b ^ c ^ d) + e + 0x6ED9EBA1 + w[i & 15];
         e = d;
         d = c;
         c = rol(b, 30);
@@ -55,7 +61,9 @@ fn sha_block(h: u32[:], w: u32[:]) {
         a = t;
     }
     for i in 40..60 {
-        let t = rol(a, 5) + ((b & c) | (b & d) | (c & d)) + e + 0x8F1BBCDC + w[i];
+        w[i & 15] = rol(w[(i + 13) & 15] ^ w[(i + 8) & 15]
+                        ^ w[(i + 2) & 15] ^ w[i & 15], 1);
+        let t = rol(a, 5) + ((b & c) | (b & d) | (c & d)) + e + 0x8F1BBCDC + w[i & 15];
         e = d;
         d = c;
         c = rol(b, 30);
@@ -63,7 +71,9 @@ fn sha_block(h: u32[:], w: u32[:]) {
         a = t;
     }
     for i in 60..80 {
-        let t = rol(a, 5) + (b ^ c ^ d) + e + 0xCA62C1D6 + w[i];
+        w[i & 15] = rol(w[(i + 13) & 15] ^ w[(i + 8) & 15]
+                        ^ w[(i + 2) & 15] ^ w[i & 15], 1);
+        let t = rol(a, 5) + (b ^ c ^ d) + e + 0xCA62C1D6 + w[i & 15];
         e = d;
         d = c;
         c = rol(b, 30);
@@ -77,7 +87,7 @@ fn sha_block(h: u32[:], w: u32[:]) {
     h[4] += e;
 }
 
-fn init_state(h: u32[:]) {
+fn init_state(h: u32[5]&) {
     h[0] = 0x67452301;
     h[1] = 0xEFCDAB89;
     h[2] = 0x98BADCFE;
@@ -85,16 +95,16 @@ fn init_state(h: u32[:]) {
     h[4] = 0xC3D2E1F0;
 }
 
-fn cp5(src: u32[:], dst: u32[:]) {
+fn cp5(src: u32[5]&, dst: u32[5]&) {
     for i in 5 { dst[i] = src[i]; }
 }
 
 // general digest of an arbitrary byte string -> 5 big-endian state words.
-// used only for >64-byte hmac keys and the selftest's reference checks.
-fn sha_digest(msg: u8[:], out: u32[:]) {
+// used for >64-byte hmac keys and the selftest's known-answer checks.
+fn sha_digest(msg: u8[:], out: u32[5]&) {
     var h: u32[5] = [0; 5];
     init_state(h);
-    var w: u32[80] = [0; 80];
+    var w: u32[16] = [0; 16];
     let total = msg.len;
     let nblk = (total + 9 + 63) / 64;
     for blk in nblk {
@@ -119,7 +129,7 @@ fn sha_digest(msg: u8[:], out: u32[:]) {
 // ---------------------------------------------------------- hmac, folded
 
 // precompute the post-ipad / post-opad sha1 states for one password.
-fn hmac_setup(key: u8[:], ia: u32[:], oa: u32[:]) {
+fn hmac_setup(key: u8[:], ia: u32[5]&, oa: u32[5]&) {
     var k: u8[64] = [0; 64];
     if key.len > 64 {
         var kh: u32[5] = [0; 5];
@@ -133,7 +143,7 @@ fn hmac_setup(key: u8[:], ia: u32[:], oa: u32[:]) {
     } else {
         for i in key.len { k[i] = key[i]; }
     }
-    var w: u32[80] = [0; 80];
+    var w: u32[16] = [0; 16];
     for j in 64 {
         let b = (k[j] as u32) ^ 0x36;
         w[j / 4] |= b << (24 - 8 * (j % 4));
@@ -151,7 +161,7 @@ fn hmac_setup(key: u8[:], ia: u32[:], oa: u32[:]) {
 
 // u1's message: salt || INT32_BE(block_index), one padded sha1 block.
 // salt.len + 4 must be <= 55 (salt <= 48); real archives carry 8/12/16.
-fn salt_msg(salt: u8[:], nb: i64, w: u32[:]) {
+fn salt_msg(salt: u8[:], nb: i64, w: u32[16]&) {
     for i in 16 { w[i] = 0; }
     let m = salt.len + 4;
     for j in m {
@@ -161,13 +171,12 @@ fn salt_msg(salt: u8[:], nb: i64, w: u32[:]) {
         w[j / 4] |= b << (24 - 8 * (j % 4));
     }
     w[m / 4] |= (0x80 as u32) << (24 - 8 * (m % 4));
-    // the length field covers the implicit 64-byte ipad prefix too:
-    // the inner message is ipad || salt || index, not salt || index alone
+    // the length field covers the implicit 64-byte ipad prefix too
     w[15] = ((64 + m) * 8) as u32;
 }
 
 // the serial chain's fixed 20-byte message: five state words + padding.
-fn chain_msg(u: u32[:], w: u32[:]) {
+fn chain_msg(u: u32[5]&, w: u32[16]&) {
     for i in 16 { w[i] = 0; }
     for i in 5 { w[i] = u[i]; }
     w[5] = 0x80000000;
@@ -175,14 +184,13 @@ fn chain_msg(u: u32[:], w: u32[:]) {
 }
 
 // folded last-block pbkdf2-hmac-sha1 verifier for one candidate.
-// returns true when the candidate's last-two-derived-bytes equal pv.
 fn verify(pwd: u8[:], salt: u8[:], dklen: i64, pv: u32) -> bool {
     var ia: u32[5] = [0; 5];
     var oa: u32[5] = [0; 5];
     hmac_setup(pwd, ia, oa);
     let nb = (dklen + 19) / 20;
     let r = dklen - 20 * (nb - 1);
-    var w: u32[80] = [0; 80];
+    var w: u32[16] = [0; 16];
     var inner: u32[5] = [0; 5];
     var u: u32[5] = [0; 5];
     var acc: u32[5] = [0; 5];
@@ -226,7 +234,6 @@ fn hexval(c: u8) -> i32 {
     return -1;
 }
 
-// decode up to out.len bytes of hex; returns bytes written, or -1 on junk.
 fn unhex(s: u8[:], out: u8[:]) -> i32 {
     if s.len % 2 != 0 || s.len / 2 > out.len { return -1; }
     for i in s.len / 2 {
@@ -260,7 +267,6 @@ fn expect(label: u8[:], pwd: u8[:], salt_hex: u8[:], dklen: i64, pv: u32, fails:
 
 fn selftest() {
     var fails: i32 = 0;
-    // first: the raw sha1 core against the classic known-answer vectors
     var d: u32[5] = [0; 5];
     sha_digest("abc", d);
     if d[0] == 0xA9993E36 && d[1] == 0x4706816A && d[2] == 0xBA3E2571
@@ -281,7 +287,6 @@ fn selftest() {
            "000102030405060708090a0b", 50, 0x743d, fails);
     expect("salt16/dklen66 mz7", "mz7",
            "000102030405060708090a0b0c0d0e0f", 66, 0x47a1, fails);
-    // negative control: the same case with a wrong pv must not verify
     var salt: u8[16] = [0; 16];
     for i in 16 { salt[i] = i as u8; }
     if verify("mana", salt, 66, 0x0000) { fails++; print("FAIL negative control"); }
@@ -290,36 +295,64 @@ fn selftest() {
     else { print("selftest: ", fails, " FAILURES"); }
 }
 
-// ---------------------------------------------------------------- brute
+// ---------------------------------------------------------------- threading
 
-fn brute(charset: u8[:], minl: i64, maxl: i64, salt: u8[:], dklen: i64, pv: u32) {
-    let base = charset.len;
+// flat values only: queues memcpy them between programs, so every field is
+// fixed-size. a Job is one worker's whole shard; a Msg is a hit, a progress
+// delta, or the worker's final delta (kind 1 / 0 / 2).
+struct Job {
+    salt: u8[64], salt_len: i64, dklen: i64, pv: u32,
+    charset: u8[64], cs_len: i64, minl: i64, maxl: i64,
+    start: i64, count: i64, shard: i32,
+}
+struct Msg {
+    kind: i32 = 0, shard: i32 = 0, index: i64 = 0,
+    tried: i64 = 0, pwd: u8[64] = [0; 64], pwd_len: i32 = 0,
+}
+
+fn imax(a: i64, b: i64) -> i64 { if a > b { a } else { b } }
+fn imin(a: i64, b: i64) -> i64 { if a < b { a } else { b } }
+
+thread_fn cracker() {
+    let job = qget<Job>();
     var tried: i64 = 0;
-    var hits: i64 = 0;
-    let t0 = clock();
-    for L in minl..maxl + 1 {
+    var reported: i64 = 0;
+    var base_idx: i64 = 0;           // global index of the length segment start
+    for L in job.minl..job.maxl + 1 {
         var space: i64 = 1;
-        for i in L { space *= base; }
-        print("length ", L, ": ", space, " candidates");
-        var pwd: u8[64] = [0; 64];
-        for idx in space {
-            var x = idx;
-            for j in L { pwd[L - 1 - j] = charset[x % base]; x = x / base; }
-            tried++;
-            if verify(pwd[..L], salt, dklen, pv) {
-                hits++;
-                print("HIT index=", tried - 1, " pwd=", pwd[..L]);
-            }
-            if tried % 20000 == 0 {
-                let el = clock() - t0;
-                print("tried=", tried, " elapsed=", el, "s rate=",
-                      (tried as f64) / el, "/s hits=", hits);
+        for i in L { space *= job.cs_len; }
+        let lo = imax(job.start, base_idx);
+        let hi = imin(job.start + job.count, base_idx + space);
+        if hi > lo {
+            var pwd: u8[64] = [0; 64];
+            for gi in lo..hi {
+                var x = gi - base_idx;
+                for j in L { pwd[L - 1 - j] = job.charset[x % job.cs_len]; x = x / job.cs_len; }
+                if verify(pwd[..L], job.salt[..job.salt_len], job.dklen, job.pv) {
+                    qput(Msg { kind: 1, shard: job.shard, index: gi,
+                               pwd: pwd, pwd_len: L as i32 });
+                }
+                tried++;
+                if tried - reported >= 50000 {
+                    qput(Msg { kind: 0, shard: job.shard, tried: tried - reported });
+                    reported = tried;
+                }
             }
         }
+        base_idx += space;
     }
-    let el = clock() - t0;
-    print("done: tried=", tried, " hits=", hits, " elapsed=", el,
-          "s rate=", (tried as f64) / el, "/s");
+    qput(Msg { kind: 2, shard: job.shard, tried: tried - reported });
+}
+
+// total candidates in the whole space
+fn space_total(cs: i64, minl: i64, maxl: i64) -> i64 {
+    var total: i64 = 0;
+    for L in minl..maxl + 1 {
+        var space: i64 = 1;
+        for i in L { space *= cs; }
+        total += space;
+    }
+    return total;
 }
 
 fn main() {
@@ -343,11 +376,51 @@ fn main() {
     let pv = (pvb[0] as u32) * 256 + (pvb[1] as u32);
     let minl = parse_dec(argv[5]);
     let maxl = parse_dec(argv[6]);
-    if minl < 0 || maxl < minl || maxl > 64 || argv[4].len == 0 {
+    var cs: u8[64] = [0; 64];
+    if minl < 0 || maxl < minl || maxl > 64 || argv[4].len == 0 || argv[4].len > 64 {
         print("bad charset/lengths (max 64)");
         return;
     }
-    print("brute: dklen=", dklen, " charset=", argv[4].len,
-          " chars, lengths ", minl, "..", maxl);
-    brute(argv[4], minl, maxl, salt[..n], dklen, pv);
+    for i in argv[4].len { cs[i] = argv[4][i]; }
+    let cs_len = argv[4].len;
+    var nthreads: i64 = 4;
+    if argv.len >= 8 { nthreads = parse_dec(argv[7]); }
+    if nthreads < 1 || nthreads > 64 { nthreads = 4; }
+
+    let total = space_total(cs_len, minl, maxl);
+    let t0 = clock();
+    print("brute: ", total, " candidates on ", nthreads, " threads");
+    var ids: i64[>..] = [];
+    let per = total / nthreads;
+    let rem = total % nthreads;
+    for t in nthreads {
+        let start = t * per + imin(t, rem);
+        let count = per + (if t < rem { 1 } else { 0 });
+        qput(Job { salt: salt, salt_len: n, dklen: dklen, pv: pv,
+                   charset: cs, cs_len: cs_len, minl: minl, maxl: maxl,
+                   start: start, count: count, shard: t as i32 });
+        ids.push(thread_spawn(cracker));
+    }
+    var tried_total: i64 = 0;
+    var done: i64 = 0;
+    var hits: i64 = 0;
+    while done < nthreads {
+        let m = qget<Msg>();
+        tried_total += m.tried;
+        if m.kind == 1 {
+            hits++;
+            print("HIT index=", m.index, " pwd=", m.pwd[..m.pwd_len],
+                  " (shard ", m.shard, ")");
+        } else if m.kind == 2 {
+            done++;
+            print("shard ", m.shard, " done");
+        } else {
+            let el = clock() - t0;
+            print("tried=", tried_total, " elapsed=", el, "s rate=",
+                  (tried_total as f64) / el, "/s hits=", hits);
+        }
+    }
+    let el = clock() - t0;
+    print("done: tried=", tried_total, " hits=", hits, " elapsed=", el,
+          "s aggregate rate=", (tried_total as f64) / el, "/s");
 }

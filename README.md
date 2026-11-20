@@ -111,6 +111,27 @@ on the same job, ~4.1k/s with the numba kernel) - the 1000-iteration
 PBKDF2 is fixed by the format, so no CPU reaches millions/s on AES; that
 is the wall, not the code. Hard passwords belong on the GPU export path.
 
+## Goose port (experimental standalone cracker)
+
+`goose/aescrack.goose` is a self-contained winzip-aes verifier + brute
+forcer written in [Goose](https://github.com/aardappel/goose) - the same
+folded last-block pbkdf2 as the rust kernel, with a 16-word ring sha1
+schedule and one worker thread per shard (default 4, one per core).
+Selftest is bit-exact against `hashlib.pbkdf2_hmac`; brute results carry
+the exact global candidate index, identical to a single-threaded scan.
+
+```
+# toolchain: any goose release on PATH, plus a C compiler for native builds
+goose build goose/aescrack.goose --cc gcc        # native exe (needed for threads)
+goose/aescrack.exe                                # selftest vs hashlib vectors
+goose/aescrack.exe <salt_hex> <dklen> <pv_hex> <charset> <min> <max> [threads]
+# e.g. goose/aescrack.exe 000102030405060708090a0b0c0d0e0f 66 47a1 abcdefghijklmnopqrstuvwxyz0123456789 1 3
+```
+
+Measured on this box: ~4.7k tries/s aggregate at 4 threads (native,
+ring schedule) - slower per-core than the rust 8-way avx2 kernel in the
+app, but zero python/rust dependencies once built.
+
 ## Quickstart
 
 ```
