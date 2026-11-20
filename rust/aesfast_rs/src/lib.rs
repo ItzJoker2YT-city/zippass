@@ -18,6 +18,7 @@
 
 mod sha1;
 mod sha1_avx2;
+mod sha1_ni;
 mod sha1_simd;
 
 use sha1::{compress, key_block_words, INIT};
@@ -211,10 +212,17 @@ pub extern "C" fn zpv_batch(
             written: 0,
             total: 0,
         };
-        // lane width: 8-way avx2 when present (the chain is latency-bound,
-        // so more lanes in flight = more candidates per chain), else 4-way
-        // sse2; the tail runs scalar. lane order must stay candidate order.
-        // ZIPPASS_RUST_MAXWIDTH forces 8/4/1 for a/b timing.
+        // backend: sha-ni hardware rounds when the cpu has them (this box
+        // does), else the 8-way avx2 multi-buffer, else 4-way sse2, with a
+        // scalar tail. ZIPPASS_RUST_MAXWIDTH forces ni/8/4/1 for a/b timing.
+        #[cfg(target_arch = "x86_64")]
+        let use_ni = match std::env::var("ZIPPASS_RUST_MAXWIDTH").as_deref() {
+            Ok("ni") => true,
+            Ok("8") | Ok("4") | Ok("1") => false,
+            _ => std::is_x86_feature_detected!("sha"),
+        };
+        #[cfg(not(target_arch = "x86_64"))]
+        let use_ni = false;
         #[cfg(target_arch = "x86_64")]
         let maxw: usize = match std::env::var("ZIPPASS_RUST_MAXWIDTH").as_deref() {
             Ok("4") => 4,
@@ -232,6 +240,39 @@ pub extern "C" fn zpv_batch(
 
         let mut pos = 0usize;
         let mut i = 0usize;
+        #[cfg(target_arch = "x86_64")]
+        if use_ni {
+            while i + 2 <= n {
+                let la = lens[i] as usize;
+                let lb = lens[i + 1] as usize;
+                if la + lb > pwds.len() - pos {
+                    return -1;
+                }
+                let (pa, rest) = pwds[pos..].split_at(la);
+                let passes = sha1_ni::ni::verify2_ni(
+                    pa, &rest[..lb], &salt_words, nb, r, pv);
+                if passes[0] {
+                    out.record(i as u32);
+                }
+                if passes[1] {
+                    out.record((i + 1) as u32);
+                }
+                pos += la + lb;
+                i += 2;
+            }
+            while i < n {
+                let len = lens[i] as usize;
+                if len > pwds.len() - pos {
+                    return -1;
+                }
+                if sha1_ni::ni::verify_ni(&pwds[pos..pos + len], &salt_words, nb, r, pv) {
+                    out.record(i as u32);
+                }
+                pos += len;
+                i += 1;
+            }
+            return out.total.min(i32::MAX as u32) as i32;
+        }
         #[cfg(target_arch = "x86_64")]
         if maxw >= 8 {
             while i + 8 <= n {

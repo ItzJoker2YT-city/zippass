@@ -148,7 +148,7 @@ if bv is not None:
     for off in range(0, 1024, 256):
         bv(big[off:off + 256])
     t_f = (time.perf_counter() - t0) / 1024 * 1000
-    print(f"f) rust simd batch (8-way avx2): {t_f:8.3f} ms/candidate "
+    print(f"f) rust batch (sha-ni 2-way):  {t_f:8.3f} ms/candidate "
           f"({t_a/t_f:5.1f}x vs openssl, {t_e/t_f:4.1f}x vs numba)")
     hits = bv([TRUE_PWD])
     assert hits == [0], f"true pwd not flagged: {hits}"
