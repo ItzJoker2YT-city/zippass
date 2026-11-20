@@ -13,3 +13,5 @@ __pycache__/
 zippass/_native/
 rust/**/target/
 numba_cache/
+tools/
+goose/aescrack.exe
